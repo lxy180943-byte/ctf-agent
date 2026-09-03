@@ -29,7 +29,7 @@ def _experiment(path: str):
 def test_inspect_binary_runs_once_and_records_structured_evidence(tmp_path: Path):
     state, layout = _setup(tmp_path)
     shutil.copyfile("/bin/true", layout.work_dir / "fixture")
-    state["experiments"] = [_experiment("work/fixture")]
+    state["experiments"] = [_experiment("fixture")]
     try:
         result = execute_experiment(state)
     finally:
@@ -62,7 +62,7 @@ def test_inspect_binary_tool_exception_is_recorded(tmp_path: Path, monkeypatch):
     state, layout = _setup(tmp_path)
     target = layout.work_dir / "fixture"
     target.write_bytes(b"not an ELF")
-    state["experiments"] = [_experiment("work/fixture")]
+    state["experiments"] = [_experiment("fixture")]
     import ctf_agent.graph.nodes as nodes
     monkeypatch.setattr(nodes, "inspect_binary", lambda *args: (_ for _ in ()).throw(RuntimeError("tool unavailable")))
     try:

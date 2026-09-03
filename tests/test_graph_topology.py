@@ -29,11 +29,22 @@ def test_verify_routes_have_bounded_exits(tmp_path):
 def test_verify_routes_to_next_experiment_or_reason_and_breaks_repetition(tmp_path):
     state = _state(tmp_path)
     state["unknowns"] = ["entry point"]
-    assert after_verify(state) == "select_experiment"
+    assert after_verify(state) == "reason_about_challenge"
     state["unknowns"] = []
     assert after_verify(state) == "reason_about_challenge"
-    state["tool_calls"] = [{"action_type": "read_file"}] * 3
-    assert after_verify(state, max_repeated_actions=3) == "fail_run"
+    state["tool_calls"] = [
+        {"action_type": "read_file", "action_input": {"type": "read_file", "path": "a.txt"}},
+        {"action_type": "read_file", "action_input": {"type": "read_file", "path": "b.txt"}},
+        {"action_type": "read_file", "action_input": {"type": "read_file", "path": "c.txt"}},
+    ]
+    assert after_verify(state, max_repeated_actions=3, max_tool_calls=10) == "reason_about_challenge"
+
+    state["tool_calls"] = [
+        {"action_type": "read_file", "action_input": {"type": "read_file", "path": "a.txt"}},
+        {"action_type": "read_file", "action_input": {"type": "read_file", "path": "./a.txt"}},
+        {"action_type": "read_file", "action_input": {"type": "read_file", "path": "input/../a.txt"}},
+    ]
+    assert after_verify(state, max_repeated_actions=3, max_tool_calls=10) == "fail_run"
 
 
 def test_select_experiment_uses_conditional_policy_routes_in_compiled_graph():
@@ -65,3 +76,16 @@ def test_after_select_experiment_router_unit_contract(tmp_path):
     state["paused"] = False
     state["failure_reason"] = "terminal"
     assert after_select_experiment(state) == "fail_run"
+
+
+def test_verify_candidates_has_no_direct_select_experiment_branch_in_compiled_graph():
+    graph = build_workflow().get_graph()
+    verify_edges = [edge for edge in graph.edges if edge.source == "verify_candidates"]
+
+    assert not any(edge.target == "select_experiment" for edge in verify_edges)
+    assert {edge.target for edge in verify_edges if edge.conditional} == {
+        "finish_run",
+        "human_review",
+        "fail_run",
+        "reason_about_challenge",
+    }

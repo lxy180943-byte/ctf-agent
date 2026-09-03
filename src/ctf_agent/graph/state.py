@@ -56,6 +56,33 @@ def append_evidence_items(current: list[dict[str, Any]] | None, update: object) 
     return result
 
 
+def merge_experiment_items(current: list[dict[str, Any]] | None, update: object) -> list[dict[str, Any]]:
+    """Reducer for experiment history: append new ids, merge completion updates."""
+
+    result: list[dict[str, Any]] = []
+    positions: dict[str, int] = {}
+
+    def add(item: object) -> None:
+        normalized = _evidence_item(item)
+        experiment_id = str(normalized.get("id") or "").strip()
+        if experiment_id and experiment_id in positions:
+            existing = result[positions[experiment_id]]
+            result[positions[experiment_id]] = _merge_experiment(existing, normalized)
+            return
+        if experiment_id:
+            positions[experiment_id] = len(result)
+        result.append(normalized)
+
+    for item in current or []:
+        add(item)
+    if update is None:
+        return result
+    items = update if isinstance(update, list) else [update]
+    for item in items:
+        add(item)
+    return result
+
+
 @dataclass(frozen=True)
 class StateFieldPolicy:
     """Documents field provenance and whether the model may propose updates."""
@@ -126,7 +153,7 @@ class WorkflowState(TypedDict):
     experiment_assessments: Annotated[list[dict[str, Any]], append_items]  # experiment policy; append-only
     replan_required: bool  # experiment policy; model cannot modify
     consecutive_replans: int  # experiment policy; model cannot modify
-    experiments: list[dict[str, Any]]  # executor; model cannot modify
+    experiments: Annotated[list[dict[str, Any]], merge_experiment_items]  # executor; append/merge by experiment id
     observations: Annotated[list[dict[str, Any]], append_items]  # summarizer; append-only
     events: Annotated[list[dict[str, Any]], append_items]  # runtime; append-only
     artifacts: Annotated[list[dict[str, Any]], append_items]  # executor; model cannot modify
@@ -250,6 +277,8 @@ def restore_workflow_state(payload: Mapping[str, Any] | str) -> WorkflowState:
             state[name] = [str(item) for item in value] if isinstance(value, list) else []
         elif name in _EVIDENCE_LIST_FIELDS:
             state[name] = append_evidence_items([], value)  # type: ignore[literal-required]
+        elif name == "experiments":
+            state[name] = merge_experiment_items([], value)  # type: ignore[literal-required]
         elif name in _LIST_FIELDS:
             state[name] = append_items([], value)  # type: ignore[literal-required]
         elif name in {"iteration", "max_iterations"}:
@@ -289,6 +318,16 @@ def _evidence_item(item: object) -> dict[str, Any]:
 def _evidence_key(item: Mapping[str, Any]) -> str:
     material = {str(key): value for key, value in item.items() if key != "provenance"}
     return json.dumps(_json_value(material), ensure_ascii=False, sort_keys=True)
+
+
+def _merge_experiment(existing: Mapping[str, Any], incoming: Mapping[str, Any]) -> dict[str, Any]:
+    merged = {str(key): _json_value(value) for key, value in existing.items()}
+    for key, value in incoming.items():
+        if key == "history":
+            merged["history"] = append_items(merged.get("history", []), value)
+        else:
+            merged[str(key)] = _json_value(value)
+    return merged
 
 
 def _merge_provenance(existing: Mapping[str, Any], incoming: Mapping[str, Any]) -> dict[str, Any]:

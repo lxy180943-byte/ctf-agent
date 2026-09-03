@@ -5,9 +5,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Literal
 
+from ctf_agent.graph.experiment_policy import fingerprint_experiment
 from ctf_agent.graph.state import WorkflowState
 
-Route = Literal["finish_run", "human_review", "fail_run", "reason_about_challenge", "select_experiment"]
+Route = Literal["finish_run", "human_review", "fail_run", "reason_about_challenge"]
 SelectRoute = Literal["execute_experiment", "reason_about_challenge", "human_review", "fail_run"]
 
 
@@ -35,9 +36,7 @@ def after_verify(
     if _repeated_action(state) >= max_repeated_actions:
         return "fail_run"
     if _consecutive_failures(state) >= max_consecutive_failures:
-        return "reason_about_challenge"
-    if state.get("unknowns"):
-        return "select_experiment"
+        return "fail_run"
     return "reason_about_challenge"
 
 
@@ -71,19 +70,51 @@ def _network_requests(state: WorkflowState) -> int:
 
 
 def _repeated_action(state: WorkflowState) -> int:
-    calls = [call.get("action_type") for call in state.get("tool_calls", []) if isinstance(call, dict)]
-    if not calls:
+    identities = [_tool_call_identity(call) for call in state.get("tool_calls", []) if isinstance(call, dict)]
+    identities = [identity for identity in identities if identity]
+    if not identities:
         return 0
-    latest, count = calls[-1], 0
-    for action in reversed(calls):
-        if action != latest:
+    latest, count = identities[-1], 0
+    for identity in reversed(identities):
+        if identity != latest:
             break
         count += 1
     return count
 
 
 def _consecutive_failures(state: WorkflowState) -> int:
-    return len(state.get("failed_actions", []))
+    count = 0
+    for call in reversed(state.get("tool_calls", [])):
+        if not isinstance(call, dict):
+            continue
+        if _tool_call_failed(call):
+            count += 1
+            continue
+        if _tool_call_succeeded(call):
+            break
+        break
+    return count
+
+
+def _tool_call_identity(call: dict) -> str:
+    action_type = str(call.get("action_type") or "")
+    action_input = call.get("action_input") if isinstance(call.get("action_input"), dict) else {}
+    if not action_type:
+        return ""
+    try:
+        return fingerprint_experiment({"action_type": action_type, "action_input": action_input}).digest
+    except Exception:
+        return action_type
+
+
+def _tool_call_failed(call: dict) -> bool:
+    status = str(call.get("status") or "").lower()
+    return bool(call.get("failure_signal_matched") or call.get("timed_out") or status in {"failed", "blocked", "error", "rejected"})
+
+
+def _tool_call_succeeded(call: dict) -> bool:
+    status = str(call.get("status") or "").lower()
+    return status in {"executed", "success", "succeeded", "ok"} and not call.get("failure_signal_matched") and not call.get("timed_out")
 
 
 def _elapsed_seconds(state: WorkflowState) -> float:

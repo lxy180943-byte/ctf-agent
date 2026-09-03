@@ -163,7 +163,7 @@ def select_experiment(state: WorkflowState) -> dict[str, Any]:
             }
         action_type = str(selected_data.get("action_type") or "")
         safe, reason = _safety_check(action_type, selected_data, state)
-        experiment = {"id": f"experiment-{state['iteration']}", "action_type": action_type, "plan": selected_data, "safety_checked": safe, "safety_reason": reason, "assessment": assessment_record, "completed": False}
+        experiment = {"id": f"experiment-{state['iteration']}", "action_type": action_type, "plan": selected_data, "safety_checked": safe, "safety_reason": reason, "assessment": assessment_record, "completed": False, "status": "planned"}
         return {
             "phase": "experiment-selected",
             "selected_experiment": selected_data,
@@ -175,6 +175,29 @@ def select_experiment(state: WorkflowState) -> dict[str, Any]:
             "failed_actions": [] if safe else [{"experiment": experiment, "reason": reason}],
         }
     return _guard(state, "select_experiment", work)
+
+
+def _completed_experiment_update(experiment: Mapping[str, Any], *, outcome: str, tool_call: Mapping[str, Any] | None = None, reason: str | None = None) -> dict[str, Any]:
+    update = {
+        "id": experiment.get("id"),
+        "action_type": experiment.get("action_type"),
+        "plan": experiment.get("plan"),
+        "safety_checked": bool(experiment.get("safety_checked")),
+        "safety_reason": experiment.get("safety_reason"),
+        "assessment": experiment.get("assessment"),
+        "completed": True,
+        "status": "completed",
+        "outcome": outcome,
+        "completed_at": utc_now(),
+    }
+    if tool_call is not None:
+        update["tool_call_id"] = tool_call.get("id") or tool_call.get("tool_call_id") or tool_call.get("experiment_id")
+        update["expected_signal_matched"] = bool(tool_call.get("expected_signal_matched"))
+        update["failure_signal_matched"] = bool(tool_call.get("failure_signal_matched"))
+        update["artifact_paths"] = list(tool_call.get("artifact_paths", []) or [])
+    if reason:
+        update["failure_reason"] = redact_string(str(reason))[:500]
+    return update
 
 
 def execute_experiment(state: WorkflowState) -> dict[str, Any]:
@@ -193,21 +216,22 @@ def execute_experiment(state: WorkflowState) -> dict[str, Any]:
             failure = {"experiment_id": experiment.get("id"), "reason": str(exc)}
             observation = {"source": "experiment-validation", "error": str(exc)}
             _trace(state, "experiment-validation-failed", "error", failure)
-            return {"phase": "execution-blocked", "failed_actions": [failure], "observations": [observation], "solved": False}
+            return {"phase": "execution-blocked", "experiments": [_completed_experiment_update(experiment, outcome="invalid", reason=str(exc))], "failed_actions": [failure], "observations": [observation], "solved": False}
         runtime = _runtime(state)
         if runtime.tools is None:
             raise RuntimeError("No ToolDependencies bound for experiment execution")
         plan = ExperimentPlan.model_validate(experiment["plan"])
         if not isinstance(plan.action_input, (PlanReadFileInput, PlanSearchArtifactsInput, PlanRunCommandInput, PlanHttpRequestInput, PlanInspectBinaryInput, PlanAskVerifierInput, PlanPauseForHumanInput)):
-            return {"phase": "execution-blocked", "failed_actions": [{"experiment_id": experiment["id"], "reason": "ReadFileInput and SearchArtifactsInput dispatch are implemented."}], "observations": [{"source": "experiment-validation", "error": "unsupported action input"}], "solved": False}
+            reason = "ReadFileInput and SearchArtifactsInput dispatch are implemented."
+            return {"phase": "execution-blocked", "experiments": [_completed_experiment_update(experiment, outcome="unsupported", reason=reason)], "failed_actions": [{"experiment_id": experiment["id"], "reason": reason}], "observations": [{"source": "experiment-validation", "error": "unsupported action input"}], "solved": False}
         raw_action_input = plan.action_input.model_dump(mode="json")
         action_input = redact_value(raw_action_input) if isinstance(plan.action_input, PlanHttpRequestInput) else raw_action_input
         risk_decision: object = experiment.get("safety_reason")
         if isinstance(plan.action_input, PlanPauseForHumanInput):
             reason = plan.action_input.reason
-            call = {"experiment_id": experiment["id"], "goal": plan.goal, "action_type": plan.action_type, "action_input": action_input, "status": "paused", "risk_decision": "human review requested", "expected_signal": plan.expected_signal, "failure_signal": plan.failure_signal, "expected_signal_matched": False, "failure_signal_matched": False, "duration_seconds": 0.0, "artifact_paths": []}
+            call = {"id": f"tool-call-{experiment['id']}", "experiment_id": experiment["id"], "goal": plan.goal, "action_type": plan.action_type, "action_input": action_input, "status": "paused", "risk_decision": "human review requested", "expected_signal": plan.expected_signal, "failure_signal": plan.failure_signal, "expected_signal_matched": False, "failure_signal_matched": False, "duration_seconds": 0.0, "artifact_paths": []}
             observation = {"source": "pause_for_human", "reason": reason, "requested_input": reason, "resume_goal": plan.goal, "current_hypothesis": state.get("current_hypothesis"), "iteration": state["iteration"]}
-            return {"phase": "paused", "paused": True, "pause_reason": reason, "pending_human_question": reason, "next_goal": plan.goal, "tool_calls": [call], "observations": [observation]}
+            return {"phase": "paused", "paused": True, "pause_reason": reason, "pending_human_question": reason, "next_goal": plan.goal, "experiments": [_completed_experiment_update(experiment, outcome="paused", tool_call=call)], "tool_calls": [call], "observations": [observation]}
         if isinstance(plan.action_input, PlanInspectBinaryInput):
             try:
                 _validate_solver_relative_path(plan.action_input.path)
@@ -217,8 +241,8 @@ def execute_experiment(state: WorkflowState) -> dict[str, Any]:
             except (OSError, ValueError, WorkspaceBoundaryError) as exc:
                 reason = str(exc)
                 risk_decision = {"level": "low", "reason": reason}
-                call = {"experiment_id": experiment["id"], "goal": plan.goal, "action_type": plan.action_type, "action_input": action_input, "status": "blocked", "risk_decision": risk_decision, "expected_signal": plan.expected_signal, "failure_signal": plan.failure_signal, "expected_signal_matched": False, "failure_signal_matched": False, "duration_seconds": 0.0, "artifact_paths": []}
-                return {"phase": "execution-blocked", "tool_calls": [call], "failed_actions": [{"experiment_id": experiment["id"], "reason": reason}], "observations": [{"source": plan.action_type, "ok": False, "error": reason}]}
+                call = {"id": f"tool-call-{experiment['id']}", "experiment_id": experiment["id"], "goal": plan.goal, "action_type": plan.action_type, "action_input": action_input, "status": "blocked", "risk_decision": risk_decision, "expected_signal": plan.expected_signal, "failure_signal": plan.failure_signal, "expected_signal_matched": False, "failure_signal_matched": False, "duration_seconds": 0.0, "artifact_paths": []}
+                return {"phase": "execution-blocked", "experiments": [_completed_experiment_update(experiment, outcome="blocked", tool_call=call, reason=reason)], "tool_calls": [call], "failed_actions": [{"experiment_id": experiment["id"], "reason": reason}], "observations": [{"source": plan.action_type, "ok": False, "error": reason}]}
             risk_decision = {"level": "low", "reason": "Workspace path guard passed."}
         if isinstance(plan.action_input, PlanHttpRequestInput):
             authorized, authorization = _authorize_http_request(plan.action_input, runtime.tools, state)
@@ -227,7 +251,7 @@ def execute_experiment(state: WorkflowState) -> dict[str, Any]:
                 reason = str(authorization["reason"])
                 call = {"experiment_id": experiment["id"], "goal": plan.goal, "action_type": plan.action_type, "action_input": action_input, "status": "blocked", "risk_decision": risk_decision, "expected_signal": plan.expected_signal, "failure_signal": plan.failure_signal, "expected_signal_matched": False, "failure_signal_matched": False, "duration_seconds": 0.0, "artifact_paths": []}
                 observation = {"source": plan.action_type, "ok": False, "authorization": authorization, "error": reason}
-                return {"phase": "execution-blocked", "tool_calls": [call], "failed_actions": [{"experiment_id": experiment["id"], "reason": reason}], "observations": [observation]}
+                return {"phase": "execution-blocked", "experiments": [_completed_experiment_update(experiment, outcome="blocked", tool_call=call, reason=reason)], "tool_calls": [call], "failed_actions": [{"experiment_id": experiment["id"], "reason": reason}], "observations": [observation]}
         if isinstance(plan.action_input, PlanRunCommandInput):
             command_risk = classify_command_risk(plan.action_input.command, str(state["challenge"].get("connection") or ""))
             risk_decision = command_risk.to_dict()
@@ -235,7 +259,7 @@ def execute_experiment(state: WorkflowState) -> dict[str, Any]:
                 reason = command_risk.reason
                 call = {"experiment_id": experiment["id"], "goal": plan.goal, "action_type": plan.action_type, "action_input": action_input, "status": "blocked", "risk_decision": risk_decision, "expected_signal": plan.expected_signal, "failure_signal": plan.failure_signal, "expected_signal_matched": False, "failure_signal_matched": False, "duration_seconds": 0.0, "artifact_paths": []}
                 observation = {"source": plan.action_type, "ok": False, "risk": risk_decision, "error": reason}
-                return {"phase": "execution-blocked", "tool_calls": [call], "failed_actions": [{"experiment_id": experiment["id"], "reason": reason}], "observations": [observation]}
+                return {"phase": "execution-blocked", "experiments": [_completed_experiment_update(experiment, outcome="blocked", tool_call=call, reason=reason)], "tool_calls": [call], "failed_actions": [{"experiment_id": experiment["id"], "reason": reason}], "observations": [observation]}
         try:
             if isinstance(plan.action_input, PlanReadFileInput):
                 result = read_file(runtime.tools, ReadFileInput(path=plan.action_input.path))
@@ -252,12 +276,12 @@ def execute_experiment(state: WorkflowState) -> dict[str, Any]:
             else:
                 raise RuntimeError("Unsupported validated action input")
         except Exception as exc:
-            call = {"experiment_id": experiment["id"], "goal": plan.goal, "action_type": plan.action_type, "action_input": action_input, "status": "failed", "risk_decision": risk_decision, "expected_signal": plan.expected_signal, "failure_signal": plan.failure_signal, "expected_signal_matched": False, "failure_signal_matched": False, "duration_seconds": 0.0, "artifact_paths": []}
-            return {"phase": "executed", "tool_calls": [call], "failed_actions": [{"experiment_id": experiment["id"], "reason": str(exc)}], "observations": [{"source": plan.action_type, "error": str(exc)}]}
+            call = {"id": f"tool-call-{experiment['id']}", "experiment_id": experiment["id"], "goal": plan.goal, "action_type": plan.action_type, "action_input": action_input, "status": "failed", "risk_decision": risk_decision, "expected_signal": plan.expected_signal, "failure_signal": plan.failure_signal, "expected_signal_matched": False, "failure_signal_matched": False, "duration_seconds": 0.0, "artifact_paths": []}
+            return {"phase": "executed", "experiments": [_completed_experiment_update(experiment, outcome="failed", tool_call=call, reason=str(exc))], "tool_calls": [call], "failed_actions": [{"experiment_id": experiment["id"], "reason": str(exc)}], "observations": [{"source": plan.action_type, "error": str(exc)}]}
         evidence_text = json.dumps(result.observation, ensure_ascii=False, sort_keys=True)
         status = "failed" if isinstance(plan.action_input, (PlanHttpRequestInput, PlanInspectBinaryInput)) and not result.ok else "executed"
-        call = {"experiment_id": experiment["id"], "goal": plan.goal, "action_type": plan.action_type, "action_input": action_input, "status": status, "risk_decision": risk_decision, "expected_signal": plan.expected_signal, "failure_signal": plan.failure_signal, "expected_signal_matched": plan.expected_signal in evidence_text, "failure_signal_matched": plan.failure_signal in evidence_text, "duration_seconds": result.duration_seconds, "artifact_paths": [artifact["path"] for artifact in result.artifacts]}
-        return {"phase": "executed", "tool_calls": [call], "artifacts": result.artifacts, "observations": [{"source": plan.action_type, "evidence": result.observation, "ok": result.ok}], "failed_actions": [] if result.ok else [{"experiment_id": experiment["id"], "reason": result.error or f"{plan.action_type} failed"}]}
+        call = {"id": f"tool-call-{experiment['id']}", "experiment_id": experiment["id"], "goal": plan.goal, "action_type": plan.action_type, "action_input": action_input, "status": status, "risk_decision": risk_decision, "expected_signal": plan.expected_signal, "failure_signal": plan.failure_signal, "expected_signal_matched": plan.expected_signal in evidence_text, "failure_signal_matched": plan.failure_signal in evidence_text, "duration_seconds": result.duration_seconds, "artifact_paths": [artifact["path"] for artifact in result.artifacts]}
+        return {"phase": "executed", "experiments": [_completed_experiment_update(experiment, outcome=status, tool_call=call, reason=result.error if not result.ok else None)], "tool_calls": [call], "artifacts": result.artifacts, "observations": [{"source": plan.action_type, "evidence": result.observation, "ok": result.ok}], "failed_actions": [] if result.ok else [{"experiment_id": experiment["id"], "reason": result.error or f"{plan.action_type} failed"}]}
     return _guard(state, "execute_experiment", work)
 
 

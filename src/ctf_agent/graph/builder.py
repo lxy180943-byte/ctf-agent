@@ -63,7 +63,7 @@ def build_workflow(
     router = partial(after_verify, max_tool_calls=max_tool_calls, max_network_requests=max_network_requests, max_total_seconds=max_total_seconds, max_repeated_actions=max_repeated_actions, max_consecutive_failures=max_consecutive_failures)
     workflow.add_conditional_edges("verify_candidates", router, {
         "finish_run": "finish_run", "human_review": "human_review", "fail_run": "fail_run",
-        "reason_about_challenge": "reason_about_challenge", "select_experiment": "select_experiment",
+        "reason_about_challenge": "reason_about_challenge",
     })
     workflow.add_conditional_edges("human_review", after_human_review, {"end": END})
     workflow.add_edge("finish_run", END)

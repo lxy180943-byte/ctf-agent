@@ -82,6 +82,44 @@ def test_same_read_file_input_fingerprint_is_stable_and_normalized():
     assert first.normalized_input == {"path": "input/app.php"}
 
 
+def test_fingerprint_semantics_cover_action_input_structure_and_types():
+    base = _read("foo/../a.txt")
+    same_path = _read("a.txt")
+    different_path = _read("b.txt")
+    search_same_shape = {
+        "goal": base["goal"],
+        "action_type": "search_artifacts",
+        "action_input": {"type": "search_artifacts", "pattern": "a.txt"},
+        "expected_signal": "match",
+        "failure_signal": "none",
+        "risk": "low",
+        "rollback": "none",
+    }
+    http_one = _http("http://web.local/index.php?b=2&a=1")
+    http_two = _http("http://web.local/index.php?a=9&b=8")
+    command_int = {"action_type": "run_command", "action_input": {"type": "run_command", "command": "printf 1", "timeout": 1}}
+    command_string = {"action_type": "run_command", "action_input": {"timeout": "1", "command": "printf 1", "type": "run_command"}}
+    unknown_list_ab = {"action_type": "custom", "action_input": {"items": ["a", "b"]}}
+    unknown_list_ba = {"action_type": "custom", "action_input": {"items": ["b", "a"]}}
+    unknown_bool = {"action_type": "custom", "action_input": {"value": True}}
+    unknown_string = {"action_type": "custom", "action_input": {"value": "True"}}
+
+    assert fingerprint_experiment(base) == fingerprint_experiment(same_path)
+    assert fingerprint_experiment(base) != fingerprint_experiment(different_path)
+    assert fingerprint_experiment(base).digest != fingerprint_experiment(search_same_shape).digest
+    assert fingerprint_experiment(http_one) == fingerprint_experiment(http_two)
+    assert fingerprint_experiment(command_int) == fingerprint_experiment(command_string)
+    assert fingerprint_experiment(unknown_list_ab) != fingerprint_experiment(unknown_list_ba)
+    assert fingerprint_experiment(unknown_bool) != fingerprint_experiment(unknown_string)
+
+
+def test_missing_and_empty_action_input_have_explicit_same_identity():
+    missing = {"action_type": "ask_verifier"}
+    empty = {"action_type": "ask_verifier", "action_input": {}}
+
+    assert fingerprint_experiment(missing) == fingerprint_experiment(empty)
+
+
 def test_http_fingerprint_does_not_leak_sensitive_header_values():
     fingerprint = fingerprint_experiment(_http())
     dumped = fingerprint.model_dump_json()
@@ -137,6 +175,36 @@ def test_two_consecutive_matching_failures_replan(tmp_path):
     assert assessment.duplicate is True
     assert assessment.recommended_action == "replan"
     assert any("failed twice" in reason for reason in assessment.reasons)
+
+
+def test_completed_experiment_status_does_not_double_count_one_failed_tool_call(tmp_path):
+    state = _state(tmp_path)
+    plan = _read("input/app.php")
+    state["experiments"].append(
+        {
+            "id": "exp-1",
+            "action_type": plan["action_type"],
+            "plan": plan,
+            "completed": True,
+            "status": "completed",
+            "outcome": "failed",
+        }
+    )
+    state["tool_calls"].append(
+        {
+            "id": "call-exp-1",
+            "experiment_id": "exp-1",
+            "action_type": plan["action_type"],
+            "action_input": plan["action_input"],
+            "status": "failed",
+            "failure_signal_matched": True,
+        }
+    )
+
+    assessment = assess_experiment(plan, workflow_state=state)
+
+    assert assessment.recommended_action == "replan"
+    assert not any("failed twice" in reason for reason in assessment.reasons)
 
 
 def test_network_path_and_risk_constraints_block(tmp_path):
