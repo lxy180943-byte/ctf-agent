@@ -8,7 +8,7 @@ import shlex
 import shutil
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Literal
 from urllib.parse import urlencode, urlparse, urlunparse
 
@@ -198,7 +198,7 @@ def inspect_binary(deps: ToolDependencies, request: InspectBinaryInput) -> ToolO
                 f"readelf -h -- {shlex.quote(relative)} 2>/dev/null || true",
             ]
         )
-        result = deps.context.executor.run(command, cwd=deps.context.layout.challenge_dir, timeout=min(deps.context.timeout, 60), env={})
+        result = deps.context.executor.run(command, cwd=deps.context.layout.work_dir, timeout=min(deps.context.timeout, 60), env={})
     except (OSError, WorkspaceBoundaryError, RuntimeError, ValueError) as exc:
         return _record(deps, "inspect_binary", started, False, "low", {"path": request.path}, error=str(exc))
     deps.execution_batch.results.append(result)
@@ -253,14 +253,24 @@ def structured_tool_functions() -> dict[str, Any]:
 
 
 def _resolve_workspace_path(deps: ToolDependencies, path: str, *, must_exist: bool) -> Path:
-    resolved = resolve_inside(path, deps.context.layout.challenge_dir)
+    _validate_solver_relative_path(path)
+    resolved = resolve_inside(path, deps.context.layout.work_dir)
     if must_exist and (not resolved.exists() or not resolved.is_file()):
         raise ValueError(f"Path is not a readable file in this challenge workspace: {path}")
     return resolved
 
 
+def _validate_solver_relative_path(path: str) -> None:
+    raw = str(path).strip()
+    candidate = Path(raw)
+    if not raw or candidate.is_absolute() or PureWindowsPath(raw).is_absolute():
+        raise ValueError(f"Path is not a challenge-relative file path: {path}")
+    if any(part in {"", ".", ".."} for part in candidate.parts):
+        raise ValueError(f"Path is outside workspace: unsafe segment in {path}")
+
+
 def _display_path(deps: ToolDependencies, path: Path) -> str:
-    return str(path.resolve().relative_to(deps.context.layout.challenge_dir.resolve()))
+    return str(path.resolve().relative_to(deps.context.layout.work_dir.resolve()))
 
 
 def _contains_network_command(command: str) -> bool:

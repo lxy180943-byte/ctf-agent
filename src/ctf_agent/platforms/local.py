@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from ctf_agent.core.config import parse_simple_yaml
@@ -42,23 +42,33 @@ class LocalPlatformAdapter(PlatformAdapter):
         raise KeyError(f"Challenge not found: {challenge_id}")
 
     def download_files(self, challenge: Challenge, destination: str | Path) -> list[Artifact]:
-        destination_path = Path(destination).expanduser()
+        destination_path = Path(destination).expanduser().resolve()
         destination_path.mkdir(parents=True, exist_ok=True)
-        source_dir = Path(str(challenge.metadata.get("source_dir", self.root))).expanduser()
+        source_dir = Path(str(challenge.metadata.get("source_dir", self.root))).expanduser().resolve()
 
         artifacts: list[Artifact] = []
+        targets_seen: set[Path] = set()
         for file_name in challenge.files:
-            source = (source_dir / file_name).resolve()
+            relative = _safe_challenge_file_path(file_name)
+            source = (source_dir / relative).resolve()
+            if source != source_dir and source_dir not in source.parents:
+                raise ValueError(f"Challenge file path escapes source directory: {file_name}")
             if not source.exists() or not source.is_file():
                 raise FileNotFoundError(f"Challenge file not found: {source}")
-            target = destination_path / Path(file_name).name
+            target = (destination_path / relative).resolve()
+            if target != destination_path and destination_path not in target.parents:
+                raise ValueError(f"Challenge file path escapes destination directory: {file_name}")
+            if target in targets_seen:
+                raise ValueError(f"Duplicate challenge file destination: {relative.as_posix()}")
+            targets_seen.add(target)
+            target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
             artifacts.append(
                 Artifact(
                     path=str(target),
                     kind="challenge-file",
-                    description=f"Downloaded local challenge file {file_name}",
-                    metadata={"source": str(source)},
+                    description=f"Downloaded local challenge file {relative.as_posix()}",
+                    metadata={"source": str(source), "logical_path": relative.as_posix()},
                 )
             )
         return artifacts
@@ -130,3 +140,13 @@ class LocalPlatformAdapter(PlatformAdapter):
         if isinstance(value, list):
             return [str(item) for item in value]
         raise ValueError("challenge.yaml field 'files' must be a string or list")
+
+
+def _safe_challenge_file_path(file_name: str) -> Path:
+    raw = str(file_name).strip()
+    path = Path(raw)
+    if not raw or path.is_absolute() or PureWindowsPath(raw).is_absolute():
+        raise ValueError(f"Challenge file path must be relative: {file_name}")
+    if any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError(f"Challenge file path contains unsafe segment: {file_name}")
+    return Path(*path.parts)

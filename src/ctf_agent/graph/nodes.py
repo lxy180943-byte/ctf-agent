@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 
@@ -59,10 +59,11 @@ def ingest_challenge(state: WorkflowState) -> dict[str, Any]:
 def collect_initial_evidence(state: WorkflowState) -> dict[str, Any]:
     def work() -> dict[str, Any]:
         root = Path(state["run_dir"])
+        work_dir = root / "work"
         files = []
-        for path in sorted((root / "input").glob("*") if (root / "input").exists() else []):
+        for path in sorted(work_dir.rglob("*") if work_dir.exists() else [], key=lambda item: str(item)):
             if path.is_file():
-                files.append({"path": str(path.relative_to(root)), "size": path.stat().st_size})
+                files.append({"path": str(path.relative_to(work_dir)), "size": path.stat().st_size})
         return {"phase": "evidence-collected", "observations": [{"source": "workspace", "files": files}]}
     return _guard(state, "collect_initial_evidence", work)
 
@@ -209,7 +210,8 @@ def execute_experiment(state: WorkflowState) -> dict[str, Any]:
             return {"phase": "paused", "paused": True, "pause_reason": reason, "pending_human_question": reason, "next_goal": plan.goal, "tool_calls": [call], "observations": [observation]}
         if isinstance(plan.action_input, PlanInspectBinaryInput):
             try:
-                binary_path = resolve_inside(plan.action_input.path, runtime.tools.context.layout.challenge_dir)
+                _validate_solver_relative_path(plan.action_input.path)
+                binary_path = resolve_inside(plan.action_input.path, runtime.tools.context.layout.work_dir)
                 if not binary_path.is_file():
                     raise ValueError("Path is not a readable binary in this challenge workspace.")
             except (OSError, ValueError, WorkspaceBoundaryError) as exc:
@@ -684,6 +686,15 @@ def _safety_check(action: str, plan: Mapping[str, Any], state: WorkflowState) ->
         if risk.level is RiskLevel.REFUSE or risk.confirm_required:
             return False, risk.reason
     return True, "Passed graph safety gate; tool will revalidate at execution."
+
+
+def _validate_solver_relative_path(path: str) -> None:
+    raw = str(path).strip()
+    candidate = Path(raw)
+    if not raw or candidate.is_absolute() or PureWindowsPath(raw).is_absolute():
+        raise ValueError(f"Path is not a challenge-relative file path: {path}")
+    if any(part in {"", ".", ".."} for part in candidate.parts):
+        raise ValueError(f"Path is outside workspace: unsafe segment in {path}")
 
 
 def _execute_tool(deps: ToolDependencies, action: str, plan: Mapping[str, Any]):

@@ -24,7 +24,7 @@ def _setup(tmp_path: Path):
 
 
 def _experiment():
-    return {"id": "e-read", "safety_checked": True, "safety_reason": "low risk", "action_type": "read_file", "plan": {"goal": "Read evidence", "action_type": "read_file", "action_input": {"type": "read_file", "path": "work/a.txt"}, "expected_signal": "known text", "failure_signal": "missing", "risk": "low", "rollback": "none"}}
+    return {"id": "e-read", "safety_checked": True, "safety_reason": "low risk", "action_type": "read_file", "plan": {"goal": "Read evidence", "action_type": "read_file", "action_input": {"type": "read_file", "path": "a.txt"}, "expected_signal": "known text", "failure_signal": "missing", "risk": "low", "rollback": "none"}}
 
 
 def test_read_file_dispatch_is_structured_and_auditable(tmp_path: Path):

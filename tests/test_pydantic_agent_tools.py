@@ -54,7 +54,7 @@ def _deps(tmp_path: Path, *, config: dict | None = None) -> ToolDependencies:
 def test_read_file_returns_structured_evidence_trace_and_artifact(tmp_path: Path) -> None:
     deps = _deps(tmp_path)
 
-    result = read_file(deps, ReadFileInput(path="work/note.txt"))
+    result = read_file(deps, ReadFileInput(path="note.txt"))
 
     assert result.ok is True
     assert result.observation["title"] == "Evidence"
