@@ -8,7 +8,7 @@ from typing import Any
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from ctf_agent.graph.edges import after_human_review, after_verify
+from ctf_agent.graph.edges import after_human_review, after_select_experiment, after_verify
 from ctf_agent.graph.nodes import (
     collect_initial_evidence, execute_experiment, fail_run, finish_run,
     human_review, ingest_challenge, reason_about_challenge, retrieve_memory,
@@ -51,7 +51,12 @@ def build_workflow(
     workflow.add_edge("retrieve_skills", "retrieve_memory")
     workflow.add_edge("retrieve_memory", "reason_about_challenge")
     workflow.add_edge("reason_about_challenge", "select_experiment")
-    workflow.add_edge("select_experiment", "execute_experiment")
+    workflow.add_conditional_edges("select_experiment", after_select_experiment, {
+        "execute_experiment": "execute_experiment",
+        "reason_about_challenge": "reason_about_challenge",
+        "human_review": "human_review",
+        "fail_run": "fail_run",
+    })
     workflow.add_edge("execute_experiment", "summarize_observation")
     workflow.add_edge("summarize_observation", "update_hypotheses")
     workflow.add_edge("update_hypotheses", "verify_candidates")
