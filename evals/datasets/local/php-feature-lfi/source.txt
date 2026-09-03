@@ -1,0 +1,30 @@
+<html>
+  <body>
+    <div class="source">
+      <pre>&lt;?php
+parse_str($_SERVER['QUERY_STRING'] ?? '', $params);
+
+$token = $_GET['token'] ?? '';
+$mode = $_GET['mode'] ?? 'show';
+$allow = ['show', 'debug', '1', '0'];
+
+if (!in_array($mode, $allow)) {
+    die('bad mode');
+}
+
+// md5 array trick / weak compare target on older PHP builds.
+if (md5($token) == '0e462097431906509019562988736854') {
+    $page = $_GET['page'] ?? '0';
+    $page_num = intval($page, 0);
+    $filename = $_GET['filename'] ?? ('pages/' . $page_num . '.php');
+
+    if (!preg_match('/(^|\.\.|php:\/\/|flag|secret)/i', $filename)) {
+        include($filename);
+    }
+}
+
+echo 'OK';
+</pre>
+    </div>
+  </body>
+</html>

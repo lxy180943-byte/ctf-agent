@@ -1,0 +1,17 @@
+id: web-basic
+title: Web Basic
+category: web
+description: local HTML form and robots challenge.
+files:
+  - response.html
+flag_regex: flag\{[A-Za-z0-9_]+\}
+metadata:
+  expected_flag: flag{web_basic}
+  max_time: 60
+  difficulty: easy
+  tags:
+    - web
+    - triage
+  required_tools:
+    - python3
+    - curl

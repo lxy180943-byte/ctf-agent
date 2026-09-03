@@ -1,0 +1,26 @@
+FROM ubuntu:24.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+LABEL org.opencontainers.image.title="ctf-agent generic"
+LABEL org.opencontainers.image.description="General CTF triage tools for authorized local challenges."
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      python3 \
+      python3-pip \
+      file \
+      binutils \
+      curl \
+      wget \
+      ripgrep \
+      jq \
+      xxd \
+      netcat-openbsd \
+      bash \
+      coreutils \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+CMD ["bash"]

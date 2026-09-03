@@ -1,0 +1,18 @@
+id: forensics-image
+title: PNG Metadata
+category: forensics
+description: image stego metadata strings binwalk carving toy.
+files:
+  - image.png
+flag_regex: flag\{[A-Za-z0-9_]+\}
+metadata:
+  expected_flag: flag{forensics_png}
+  max_time: 60
+  difficulty: easy
+  tags:
+    - forensics
+    - triage
+  required_tools:
+    - python3
+    - file
+    - strings

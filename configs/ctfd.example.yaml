@@ -1,0 +1,13 @@
+platform:
+  ctfd:
+    default_profile: demo
+    profiles:
+      demo:
+        name: demo
+        url: https://ctf.example
+        token:
+        team: your-team
+        flag_format: flag\{[^}]+\}
+        submit_enabled: false
+        retries: 3
+        timeout: 30

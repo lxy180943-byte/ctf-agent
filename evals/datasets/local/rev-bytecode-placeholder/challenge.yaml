@@ -1,0 +1,18 @@
+id: rev-bytecode-placeholder
+title: Python Bytecode
+category: rev
+description: Python bytecode pyc APK PE placeholder classification toy.
+files:
+  - program.pyc
+flag_regex: flag\{[A-Za-z0-9_]+\}
+metadata:
+  expected_flag: flag{rev_bytecode}
+  max_time: 60
+  difficulty: easy
+  tags:
+    - rev
+    - triage
+  required_tools:
+    - python3
+    - file
+    - strings

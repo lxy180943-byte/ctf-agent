@@ -1,0 +1,13 @@
+id: web-php-lfi-type-juggle
+title: PHP Type Juggling LFI Toy
+category: web
+description: Local source-only PHP toy combining highlight_file disclosure, PHP type tricks, and an include sink.
+files:
+  - index.php
+  - flag.php
+flag_regex: flag\{[^}]+\}
+metadata:
+  expected_flag: flag{php_lfi_type_juggle}
+  difficulty: toy
+  tags: [php, lfi, type-juggling, local]
+  required_tools: [python3]

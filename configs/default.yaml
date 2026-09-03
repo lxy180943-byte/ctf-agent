@@ -1,0 +1,86 @@
+workspace_dir: ~/ctf-workspace
+artifacts_dir: ~/ctf-artifacts
+
+platform:
+  default: local
+  ctfd:
+    default_profile: default
+    url:
+    token:
+    team:
+    flag_format:
+    submit_enabled: false
+    profiles:
+      default:
+        name: default
+        url:
+        token:
+        team:
+        flag_format:
+        submit_enabled: false
+        retries: 3
+        timeout: 30
+
+verification:
+  custom_flag_patterns: []
+
+memory:
+  enabled: true
+  path: ~/ctf-workspace/memory/knowledge.sqlite
+  auto_learn: true
+  search_limit: 5
+  skill_docs:
+  snippet_limit: 700
+  max_files: 500
+
+knowledge:
+  skill_docs:
+  snippet_limit: 700
+  max_files: 500
+
+sandbox:
+  engine: docker
+  default_profile: generic
+  image: ctf-agent:generic
+  images:
+    generic: ctf-agent:generic
+    pwn: ctf-agent:pwn
+    web: ctf-agent:web
+    crypto: ctf-agent:crypto
+    rev: ctf-agent:rev
+    forensics: ctf-agent:forensics
+    misc: ctf-agent:generic
+    sage: sagemath/sagemath:latest
+  network: none
+  allow_network: false
+  timeout_seconds: 60
+  memory: 512m
+  cpu: 1.0
+
+submit:
+  enabled: false
+  dry_run_default: true
+
+logging:
+  level: INFO
+  trace_enabled: true
+  trace_path: ~/ctf-workspace/traces/ctf-agent.jsonl
+
+llm:
+  provider: none
+  timeout_seconds: 60
+  max_tokens: 1200
+
+orchestration:
+  brain: graph
+  mode: single
+  critic_after_failures: 2
+
+ui:
+  challenge_root: examples
+  host: 127.0.0.1
+  port: 8008
+
+models:
+  provider: dry-run
+  default: local-placeholder

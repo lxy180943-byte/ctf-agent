@@ -1,0 +1,22 @@
+id: php-feature-lfi
+title: PHP Feature LFI
+category: web
+description: Local benchmark that simulates PHP source disclosure and include-guard reasoning.
+files:
+  - index.php
+  - source.txt
+  - flag.txt
+flag_regex: flag\{[A-Za-z0-9_]+\}
+metadata:
+  expected_flags:
+    - flag{php_feature_lfi_local}
+  difficulty: medium
+  tags:
+    - php
+    - lfi
+    - source-disclosure
+    - hybrid
+  required_tools:
+    - php
+    - python3
+  source_benchmark: local-php-feature-lfi

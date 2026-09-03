@@ -1,0 +1,4 @@
+n = 3233
+e = 17
+c = 855
+note = flag{crypto_rsa}

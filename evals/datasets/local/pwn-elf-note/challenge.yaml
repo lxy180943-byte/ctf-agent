@@ -1,0 +1,19 @@
+id: pwn-elf-note
+title: ELF Overflow
+category: pwn
+description: pwn overflow canary checksec readelf strings toy.
+connection: nc pwn.local 31337
+files:
+  - chall
+flag_regex: flag\{[A-Za-z0-9_]+\}
+metadata:
+  expected_flag: flag{pwn_elf_note}
+  max_time: 60
+  difficulty: easy
+  tags:
+    - pwn
+    - triage
+  required_tools:
+    - python3
+    - file
+    - strings

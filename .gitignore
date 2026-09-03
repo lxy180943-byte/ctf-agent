@@ -1,0 +1,46 @@
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+ENV/
+
+# Build and packaging output
+dist/
+build/
+*.egg-info/
+pip-wheel-metadata/
+
+# Local secrets and machine-specific config
+.env
+.env.*
+!.env.example
+*.local.yaml
+*private*.yaml
+*secret*.yaml
+configs/default.private.yaml
+
+# CTF agent runtime output
+ctf-workspace/
+ctf-artifacts/
+runs/
+artifacts/
+trace.jsonl
+eval_results.jsonl
+eval_summary.json
+writeup.md
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+# CTFd secrets
+configs/ctfd*.yaml
+!configs/ctfd.example.yaml

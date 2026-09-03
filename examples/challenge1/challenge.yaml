@@ -1,0 +1,7 @@
+title: Example Challenge 1
+category: misc
+description: A tiny local challenge fixture for platform adapter smoke tests.
+files:
+  - prompt.txt
+connection:
+flag_regex: flag\{[A-Za-z0-9_]+\}

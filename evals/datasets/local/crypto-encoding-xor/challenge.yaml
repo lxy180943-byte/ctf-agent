@@ -1,0 +1,16 @@
+id: crypto-encoding-xor
+title: Encoding XOR
+category: crypto
+description: base64 hex xor substitution LCG hints for crypto triage.
+files:
+  - encoded.txt
+flag_regex: flag\{[A-Za-z0-9_]+\}
+metadata:
+  expected_flag: flag{crypto_base64}
+  max_time: 60
+  difficulty: easy
+  tags:
+    - crypto
+    - triage
+  required_tools:
+    - python3

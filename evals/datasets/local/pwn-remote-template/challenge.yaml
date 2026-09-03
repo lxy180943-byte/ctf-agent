@@ -1,0 +1,19 @@
+id: pwn-remote-template
+title: Remote ROP
+category: pwn
+description: ret2win libc remote nc parameters solve template toy.
+connection: pwn.local:4444
+files:
+  - vuln
+flag_regex: flag\{[A-Za-z0-9_]+\}
+metadata:
+  expected_flag: flag{pwn_remote_template}
+  max_time: 60
+  difficulty: easy
+  tags:
+    - pwn
+    - triage
+  required_tools:
+    - python3
+    - file
+    - strings

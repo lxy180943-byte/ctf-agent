@@ -1,0 +1,3 @@
+Welcome to the local platform adapter example.
+
+The demo flag shape is flag{example_only}; do not submit it anywhere.

@@ -1,0 +1,26 @@
+FROM ubuntu:24.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+LABEL org.opencontainers.image.title="ctf-agent crypto"
+LABEL org.opencontainers.image.description="Python crypto and math libraries for authorized CTF challenges."
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      python3 \
+      python3-sympy \
+      python3-pycryptodome \
+      python3-z3 \
+      z3 \
+      bash \
+      coreutils \
+    && mkdir -p /opt/ctf-agent \
+    && printf "%s\n" \
+      "SageMath is intentionally split out from ctf-agent:crypto." \
+      "Use an optional profile such as sagemath/sagemath for Sage-heavy challenges." \
+      > /opt/ctf-agent/README.sage \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+CMD ["bash"]

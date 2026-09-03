@@ -1,0 +1,18 @@
+id: forensics-basic
+title: Forensics Basic
+category: forensics
+description: A toy forensics benchmark where the flag is hidden in a text artifact.
+files:
+  - artifact.txt
+flag_regex: flag\{[A-Za-z0-9_]+\}
+metadata:
+  expected_flag: flag{forensics_toy}
+  max_time: 60
+  difficulty: easy
+  tags:
+    - forensics
+    - triage
+  required_tools:
+    - python3
+    - file
+    - strings

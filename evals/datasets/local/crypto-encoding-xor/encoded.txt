@@ -1,0 +1,3 @@
+base64_blob = ZmxhZ3tjcnlwdG9fYmFzZTY0fQ==
+hex_blob = 666c61677b63727970746f5f6865787d
+xor key maybe 13

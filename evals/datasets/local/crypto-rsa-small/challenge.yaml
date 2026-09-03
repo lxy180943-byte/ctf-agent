@@ -1,0 +1,16 @@
+id: crypto-rsa-small
+title: RSA Small
+category: crypto
+description: RSA small exponent triage with n e c fields.
+files:
+  - rsa.txt
+flag_regex: flag\{[A-Za-z0-9_]+\}
+metadata:
+  expected_flag: flag{crypto_rsa}
+  max_time: 60
+  difficulty: easy
+  tags:
+    - crypto
+    - triage
+  required_tools:
+    - python3

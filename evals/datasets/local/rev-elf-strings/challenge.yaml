@@ -1,0 +1,18 @@
+id: rev-elf-strings
+title: Reverse ELF
+category: rev
+description: ELF reverse strings objdump r2 toy.
+files:
+  - revbin
+flag_regex: flag\{[A-Za-z0-9_]+\}
+metadata:
+  expected_flag: flag{rev_elf_strings}
+  max_time: 60
+  difficulty: easy
+  tags:
+    - rev
+    - triage
+  required_tools:
+    - python3
+    - file
+    - strings

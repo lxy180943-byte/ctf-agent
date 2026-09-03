@@ -1,0 +1,23 @@
+FROM ubuntu:24.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+LABEL org.opencontainers.image.title="ctf-agent rev"
+LABEL org.opencontainers.image.description="Reverse engineering triage tools for authorized CTF binaries."
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      python3 \
+      file \
+      binutils \
+      gdb \
+      strace \
+      ltrace \
+      radare2 \
+      bash \
+      coreutils \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+CMD ["bash"]

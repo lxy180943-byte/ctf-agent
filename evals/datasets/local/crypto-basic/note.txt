@@ -1,0 +1,2 @@
+The ciphertext was already decoded for this toy benchmark.
+flag{crypto_toy}

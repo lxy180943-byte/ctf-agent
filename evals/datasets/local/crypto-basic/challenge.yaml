@@ -1,0 +1,16 @@
+id: crypto-basic
+title: Crypto Basic
+category: crypto
+description: A toy crypto benchmark with a visible encoded message note.
+files:
+  - note.txt
+flag_regex: flag\{[A-Za-z0-9_]+\}
+metadata:
+  expected_flag: flag{crypto_toy}
+  max_time: 60
+  difficulty: easy
+  tags:
+    - crypto
+    - triage
+  required_tools:
+    - python3
