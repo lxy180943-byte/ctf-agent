@@ -280,7 +280,7 @@ def execute_experiment(state: WorkflowState) -> dict[str, Any]:
             return {"phase": "executed", "experiments": [_completed_experiment_update(experiment, outcome="failed", tool_call=call, reason=str(exc))], "tool_calls": [call], "failed_actions": [{"experiment_id": experiment["id"], "reason": str(exc)}], "observations": [{"source": plan.action_type, "error": str(exc)}]}
         evidence_text = json.dumps(result.observation, ensure_ascii=False, sort_keys=True)
         status = "failed" if isinstance(plan.action_input, (PlanHttpRequestInput, PlanInspectBinaryInput)) and not result.ok else "executed"
-        call = {"id": f"tool-call-{experiment['id']}", "experiment_id": experiment["id"], "goal": plan.goal, "action_type": plan.action_type, "action_input": action_input, "status": status, "risk_decision": risk_decision, "expected_signal": plan.expected_signal, "failure_signal": plan.failure_signal, "expected_signal_matched": plan.expected_signal in evidence_text, "failure_signal_matched": plan.failure_signal in evidence_text, "duration_seconds": result.duration_seconds, "artifact_paths": [artifact["path"] for artifact in result.artifacts]}
+        call = {"id": f"tool-call-{experiment['id']}", "experiment_id": experiment["id"], "goal": plan.goal, "action_type": plan.action_type, "action_input": action_input, "status": status, "risk_decision": risk_decision, "expected_signal": plan.expected_signal, "failure_signal": plan.failure_signal, "expected_signal_matched": _expected_signal_matches(plan.expected_signal, result.observation, ok=result.ok), "failure_signal_matched": result.ok and plan.failure_signal in evidence_text, "duration_seconds": result.duration_seconds, "artifact_paths": [artifact["path"] for artifact in result.artifacts]}
         return {"phase": "executed", "experiments": [_completed_experiment_update(experiment, outcome=status, tool_call=call, reason=result.error if not result.ok else None)], "tool_calls": [call], "artifacts": result.artifacts, "observations": [{"source": plan.action_type, "evidence": result.observation, "ok": result.ok}], "failed_actions": [] if result.ok else [{"experiment_id": experiment["id"], "reason": result.error or f"{plan.action_type} failed"}]}
     return _guard(state, "execute_experiment", work)
 
@@ -346,6 +346,136 @@ def update_hypotheses(state: WorkflowState) -> dict[str, Any]:
             "hypothesis_updates": [audit],
         }
     return _guard(state, "update_hypotheses", work)
+
+
+def _expected_signal_matches(expected_signal: str, observation: Mapping[str, Any], *, ok: bool) -> bool:
+    if not ok:
+        return False
+    expected = str(expected_signal or "").strip().lower()
+    if not expected:
+        return False
+    evidence = observation if isinstance(observation, Mapping) else {}
+    evidence_text = json.dumps(redact_value(evidence), ensure_ascii=False, sort_keys=True).lower()
+    if expected in evidence_text:
+        return True
+    if _expects_candidate(expected) and _has_candidate_evidence(evidence, evidence_text):
+        return True
+    if _expects_web_structure(expected) and _has_web_structure(evidence):
+        return True
+    if _expects_binary_structure(expected) and _has_binary_structure(evidence):
+        return True
+    if _expects_http_signal(expected) and _has_http_signal(evidence):
+        return True
+    if _expects_search_result(expected) and _has_search_result(evidence):
+        return True
+    return False
+
+
+def _expects_candidate(expected: str) -> bool:
+    return any(
+        token in expected
+        for token in (
+            "candidate",
+            "flag",
+            "flag regex",
+            "flag-regex",
+            "flag_like",
+            "flag-like",
+            "flag\\{",
+            "flag{",
+        )
+    )
+
+
+def _has_candidate_evidence(evidence: Mapping[str, Any], evidence_text: str) -> bool:
+    if "flag{" in evidence_text or "ctf{" in evidence_text:
+        return True
+    for key in ("candidate_count", "verified_count"):
+        try:
+            if int(evidence.get(key) or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            pass
+    return bool(evidence.get("candidates") or evidence.get("verified_candidates"))
+
+
+def _expects_web_structure(expected: str) -> bool:
+    return any(
+        token in expected
+        for token in (
+            "form",
+            "input",
+            "link",
+            "comment",
+            "script",
+            "robots",
+            "html",
+            "parameter",
+            "field",
+        )
+    )
+
+
+def _has_web_structure(evidence: Mapping[str, Any]) -> bool:
+    if any(bool(evidence.get(key)) for key in ("forms", "links", "scripts")):
+        return True
+    php_analysis = evidence.get("php_analysis") if isinstance(evidence.get("php_analysis"), Mapping) else {}
+    if php_analysis and any(bool(php_analysis.get(key)) for key in ("parameters", "sinks", "guards", "blacklist", "candidate_strategies")):
+        return True
+    body = str(evidence.get("body_excerpt") or "").lower()
+    return "robots.txt" in body
+
+
+def _expects_binary_structure(expected: str) -> bool:
+    return any(
+        token in expected
+        for token in (
+            "binary",
+            "elf",
+            "file type",
+            "file identification",
+            "format",
+            "architecture",
+            "arch",
+            "bits",
+            "sha256",
+            "hash",
+            "readelf",
+            "protection",
+            "nx",
+            "pie",
+            "canary",
+            "relro",
+        )
+    )
+
+
+def _has_binary_structure(evidence: Mapping[str, Any]) -> bool:
+    binary = evidence.get("binary") if isinstance(evidence.get("binary"), Mapping) else {}
+    if not binary:
+        return False
+    return any(value not in (None, "", [], {}) for value in binary.values())
+
+
+def _expects_http_signal(expected: str) -> bool:
+    return any(token in expected for token in ("http", "status", "header", "response"))
+
+
+def _has_http_signal(evidence: Mapping[str, Any]) -> bool:
+    return any(evidence.get(key) not in (None, "", [], {}) for key in ("status", "headers", "request"))
+
+
+def _expects_search_result(expected: str) -> bool:
+    return any(token in expected for token in ("search", "grep", "match", "matches", "found"))
+
+
+def _has_search_result(evidence: Mapping[str, Any]) -> bool:
+    if evidence.get("matches"):
+        return True
+    try:
+        return int(evidence.get("match_count") or 0) > 0
+    except (TypeError, ValueError):
+        return False
 
 
 def _reconciliation_signal(delta: Mapping[str, Any], experiment: Mapping[str, Any], call: Mapping[str, Any]) -> dict[str, Any]:

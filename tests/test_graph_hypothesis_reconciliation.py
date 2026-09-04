@@ -91,6 +91,28 @@ def test_expected_signal_and_confirmed_fact_raise_confidence(tmp_path):
     assert update["current_hypothesis"] == "main"
 
 
+def test_unverified_candidate_signal_can_credit_hypothesis_without_solving(tmp_path):
+    state = _state(tmp_path)
+    state["tool_calls"][-1]["expected_signal_matched"] = True
+    state["evidence_deltas"] = [
+        _delta(
+            confirmed=[
+                {
+                    "kind": "read_file_body_excerpt",
+                    "summary": "read_file observed body_excerpt with flag-shaped candidate",
+                }
+            ]
+        )
+    ]
+
+    update = update_hypotheses(state)
+
+    assert update["hypotheses"][0]["update_reason"] == "expected signal matched confirmed facts"
+    assert update["hypotheses"][0]["confidence"] == pytest.approx(0.65)
+    assert "solved" not in update
+    assert "verified_candidates" not in update
+
+
 def test_failure_signal_lowers_confidence(tmp_path):
     state = _state(tmp_path)
     state["tool_calls"][-1]["failure_signal_matched"] = True

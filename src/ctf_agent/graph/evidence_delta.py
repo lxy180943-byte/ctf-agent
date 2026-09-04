@@ -227,13 +227,66 @@ def _generic_anomalies(exp, obs, call, evidence, provenance, anomalies) -> None:
     http_status = evidence.get("status")
     if isinstance(http_status, int) and http_status >= 400:
         anomalies.append(_item("http_unexpected_status", f"HTTP status {http_status}", provenance, status=http_status))
-    risk_text = json.dumps(_json_safe({"obs": obs, "call": call}), sort_keys=True).lower()
-    if any(word in risk_text for word in ("denied", "blocked", "refuse", "unauthorized", "outside")):
+    if _is_authorization_or_risk_block(obs, call):
         anomalies.append(_item("authorization_or_risk_block", "risk or authorization blocked execution", provenance, details={"authorization": obs.get("authorization"), "risk": obs.get("risk"), "risk_decision": call.get("risk_decision")}))
     failure_signal = _nested(exp, "plan", "failure_signal") or call.get("failure_signal")
     evidence_text = json.dumps(_json_safe(evidence), sort_keys=True).lower()
     if failure_signal and _safe_text(failure_signal).lower() in evidence_text:
         anomalies.append(_item("failure_signal_in_observation", "failure signal text appeared in observation", provenance, failure_signal=failure_signal))
+
+
+def _is_authorization_or_risk_block(obs: Mapping[str, Any], call: Mapping[str, Any]) -> bool:
+    if _safe_text(call.get("status")).lower() == "blocked":
+        return True
+    for value in (
+        obs.get("authorization"),
+        call.get("authorization"),
+        obs.get("risk"),
+        call.get("risk"),
+        obs.get("risk_decision"),
+        call.get("risk_decision"),
+    ):
+        if _decision_blocks(value):
+            return True
+    if obs.get("ok") is False:
+        for value in (obs.get("error"), obs.get("summary")):
+            if _text_describes_block(value):
+                return True
+    return False
+
+
+def _decision_blocks(value: Any) -> bool:
+    data = _mapping(value)
+    if data:
+        for key in ("allowed", "authorized", "permitted"):
+            if key in data and data.get(key) is False:
+                return True
+        for key in ("blocked", "denied", "refused"):
+            if data.get(key) is True:
+                return True
+        for key in ("level", "decision", "status", "action", "result"):
+            if _decision_word_blocks(data.get(key)):
+                return True
+        return any(_decision_blocks(item) for item in data.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_decision_blocks(item) for item in value)
+    return _text_describes_block(value)
+
+
+def _decision_word_blocks(value: Any) -> bool:
+    text = _safe_text(value).lower().replace("-", "_")
+    return text in {"block", "blocked", "deny", "denied", "refuse", "refused", "unauthorized", "forbidden", "outside_scope"}
+
+
+def _text_describes_block(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    text = value.lower().replace("-", " ")
+    allowed_markers = ("allow", "allowed", "pass", "passed", "low", "ok", "approved", "permitted")
+    block_markers = ("denied", "blocked", "refuse", "refused", "unauthorized", "forbidden", "outside authorized")
+    if any(marker in text for marker in allowed_markers):
+        return False
+    return any(marker in text for marker in block_markers)
 
 
 def _evidence(observation: Mapping[str, Any]) -> dict[str, Any]:

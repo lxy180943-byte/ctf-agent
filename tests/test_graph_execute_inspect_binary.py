@@ -72,3 +72,17 @@ def test_inspect_binary_tool_exception_is_recorded(tmp_path: Path, monkeypatch):
     assert result["tool_calls"][0]["status"] == "failed"
     assert result["failed_actions"]
     assert state["solved"] is False
+
+
+def test_failed_inspect_binary_does_not_match_expected_signal(tmp_path: Path, monkeypatch):
+    state, layout = _setup(tmp_path)
+    target = layout.work_dir / "fixture"
+    target.write_bytes(b"ELF-looking stale text")
+    state["experiments"] = [_experiment("fixture")]
+    import ctf_agent.graph.nodes as nodes
+    monkeypatch.setattr(nodes, "inspect_binary", lambda *args: (_ for _ in ()).throw(RuntimeError("tool unavailable ELF")))
+    try:
+        result = execute_experiment(state)
+    finally:
+        clear_runtime(layout.challenge_dir)
+    assert result["tool_calls"][0]["expected_signal_matched"] is False

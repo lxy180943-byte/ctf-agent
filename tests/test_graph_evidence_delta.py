@@ -4,6 +4,7 @@ import copy
 import json
 
 from ctf_agent.graph import EvidenceDelta, derive_evidence_delta
+from ctf_agent.graph.nodes import _reconciliation_signal
 
 
 def _plan(action_type: str, action_input: dict, *, expected="expected", failure="failure"):
@@ -147,6 +148,103 @@ def test_inspect_binary_observation_produces_binary_facts_and_protection_constra
     assert "nx" in constraints
     assert "pie" in constraints
     assert "canary" in constraints
+
+
+def test_allowed_low_risk_inspect_binary_success_does_not_emit_risk_block():
+    experiment = _plan("inspect_binary", {"type": "inspect_binary", "path": "revbin"})
+    observation = {
+        "source": "inspect_binary",
+        "ok": True,
+        "evidence": {
+            "path": "revbin",
+            "exit_code": 0,
+            "binary": {
+                "format": "ELF",
+                "file_type": "ELF 64-bit LSB *unknown arch 0x6c20* (SYSV)",
+                "protections": {
+                    "available": False,
+                    "reason": "No checksec-style analyzer is registered for this profile.",
+                },
+            },
+        },
+    }
+    call = _call(
+        "inspect_binary",
+        action_input={"type": "inspect_binary", "path": "revbin"},
+        expected_signal="Binary inspection returns file identification and printable content.",
+        expected_signal_matched=False,
+        failure_signal_matched=False,
+        risk_decision={"level": "low", "reason": "Workspace path guard passed."},
+        status="executed",
+    )
+
+    delta = derive_evidence_delta(experiment, observation, call)
+    signal = _reconciliation_signal(delta.model_dump(mode="json"), experiment, call)
+
+    facts = _summaries(delta.confirmed_facts)
+    anomalies = _summaries(delta.anomalies)
+    assert "binary_format" in facts
+    assert "binary_file_type" in facts
+    assert "authorization_or_risk_block" not in anomalies
+    assert signal["risk_block"] is False
+    assert signal["failure_kind"] != "risk_block"
+
+
+def test_explicit_risk_refusal_emits_authorization_or_risk_block():
+    experiment = _plan("run_command", {"type": "run_command", "command": "dangerous"}, expected="ok")
+    observation = {
+        "source": "run_command",
+        "ok": False,
+        "error": "risk policy refused execution",
+        "evidence": {"exit_code": None},
+    }
+    call = _call(
+        "run_command",
+        action_input={"type": "run_command", "command": "dangerous"},
+        status="blocked",
+        risk_decision={"level": "refuse", "reason": "blocked by policy"},
+        expected_signal_matched=False,
+    )
+
+    delta = derive_evidence_delta(experiment, observation, call)
+    signal = _reconciliation_signal(delta.model_dump(mode="json"), experiment, call)
+
+    anomalies = _summaries(delta.anomalies)
+    assert "authorization_or_risk_block" in anomalies
+    assert signal["risk_block"] is True
+    assert signal["failure_kind"] == "risk_block"
+
+
+def test_allowed_success_without_expected_signal_is_not_risk_block():
+    experiment = _plan("read_file", {"type": "read_file", "path": "note.txt"}, expected="needle")
+    observation = {
+        "source": "read_file",
+        "ok": True,
+        "evidence": {
+            "path": "note.txt",
+            "bytes_read": 32,
+            "truncated": False,
+            "body_excerpt": "ordinary evidence without the expected phrase",
+        },
+    }
+    call = _call(
+        "read_file",
+        action_input={"type": "read_file", "path": "note.txt"},
+        risk_decision={"level": "low", "reason": "allowed"},
+        expected_signal="needle",
+        expected_signal_matched=False,
+        failure_signal_matched=False,
+        status="executed",
+    )
+
+    delta = derive_evidence_delta(experiment, observation, call)
+    signal = _reconciliation_signal(delta.model_dump(mode="json"), experiment, call)
+
+    anomalies = _summaries(delta.anomalies)
+    assert "expected_signal_missing" in anomalies
+    assert "authorization_or_risk_block" not in anomalies
+    assert signal["risk_block"] is False
+    assert signal["failure_kind"] != "risk_block"
 
 
 def test_timeout_blocked_and_failure_signal_produce_anomalies_and_constraints():

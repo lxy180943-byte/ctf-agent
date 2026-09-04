@@ -1,6 +1,6 @@
 # CTF Agent Maturity Report
 
-- generated_at: `2026-09-03T04:45:12.517795Z`
+- generated_at: `2026-09-04T03:55:03.062721Z`
 - level: `workflow-ready`
 - levels: `scaffold, workflow-ready, competition-assistant, autonomous-baseline, mature`
 
@@ -44,7 +44,7 @@
 
 ## Benchmark
 
-- summary_path: `/tmp/pytest-of-liuxinyue/pytest-1/test_eval_cli_runs_filters_and0/eval-output/eval_summary.json`
+- summary_path: `/tmp/pytest-of-liuxinyue/pytest-38/test_eval_cli_runs_filters_and0/eval-output/eval_summary.json`
 - dataset: `local`
 - challenge_count: `2`
 - solved_count: `2`
@@ -57,16 +57,16 @@
 
 - enabled: `False`
 - ok: `False`
-- total_items: `338`
+- total_items: `397`
 - traceable_ratio: `1.00`
-- avg_confidence: `0.98`
-- quality_score: `1.00`
+- avg_confidence: `0.94`
+- quality_score: `0.97`
 - note: `memory is disabled in config`
 
 ## UI
 
 - ok: `True`
-- health_url: `http://127.0.0.1:45901/api/health`
+- health_url: `http://127.0.0.1:45365/api/health`
 
 ## Safety
 
