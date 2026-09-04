@@ -21,7 +21,7 @@ from ctf_agent.agents import (
     VerifierAgent,
     specialist_for_category,
 )
-from ctf_agent.core.config import get_nested
+from ctf_agent.core.config import GraphBudgets, get_nested, resolve_graph_budgets
 from ctf_agent.core.models import Challenge, FlagCandidate
 from ctf_agent.core.state import ChallengeRunState, ChallengeState
 from ctf_agent.core.redaction import redact_value
@@ -39,7 +39,7 @@ from ctf_agent.knowledge import SkillIndex
 from ctf_agent.platforms.base import PlatformAdapter
 from ctf_agent.pydantic_agent.agent import PydanticAISolverReasoner, ReasoningError
 from ctf_agent.pydantic_agent.tools import ToolDependencies
-from ctf_agent.sandbox import DockerExecutor, Executor, LocalExecutor, docker_available, image_for_category
+from ctf_agent.sandbox import DockerExecutor, ExecutionResult, Executor, LocalExecutor, docker_available, image_for_category
 from ctf_agent.sandbox.network_policy import docker_network_policy, local_executor_network_note
 from ctf_agent.tools import default_registry
 
@@ -58,13 +58,25 @@ class SolveResult:
         return self.state is ChallengeState.SOLVED
 
 
+class _CommandTimeoutExecutor(Executor):
+    """Apply the configured per-command ceiling to every executor call."""
+
+    def __init__(self, delegate: Executor, command_timeout_seconds: int) -> None:
+        self.delegate = delegate
+        self.command_timeout_seconds = command_timeout_seconds
+
+    def run(self, command: str, cwd: str | Path, timeout: int | None = None, env: dict[str, str] | None = None) -> ExecutionResult:
+        effective_timeout = self.command_timeout_seconds if timeout is None else min(int(timeout), self.command_timeout_seconds)
+        return self.delegate.run(command, cwd=cwd, timeout=effective_timeout, env=env)
+
+
 class Orchestrator:
     def __init__(
         self,
         config: dict[str, Any],
         *,
         executor_name: str | None = None,
-        max_steps: int = 10,
+        max_steps: int | None = None,
         timeout: int | None = None,
         brain: str | None = None,
         llm_provider: LLMProvider | None = None,
@@ -75,8 +87,22 @@ class Orchestrator:
     ) -> None:
         self.config = config
         self.executor_name = executor_name
-        self.max_steps = max_steps
-        self.timeout = int(timeout or get_nested(config, ("sandbox", "timeout_seconds")) or 60)
+        self.brain = str(brain or get_nested(config, ("orchestration", "brain")) or "graph").lower()
+        if self.brain not in {"llm", "fallback", "hybrid", "graph"}:
+            raise ValueError(f"Unknown brain mode: {self.brain}")
+        self.graph_budgets: GraphBudgets = resolve_graph_budgets(
+            config,
+            overrides={
+                "max_tool_calls": max_steps,
+                "command_timeout_seconds": timeout,
+            },
+        )
+        if self.brain == "graph":
+            self.max_steps = self.graph_budgets.max_tool_calls
+            self.timeout = self.graph_budgets.command_timeout_seconds
+        else:
+            self.max_steps = int(max_steps if max_steps is not None else 10)
+            self.timeout = int(timeout if timeout is not None else get_nested(config, ("sandbox", "timeout_seconds")) or 60)
         self.graph_reasoner = graph_reasoner
         self.mode = mode or str(get_nested(config, ("orchestration", "mode")) or "single")
         if self.mode not in {"single", "specialist", "critic-after-failures"}:
@@ -84,9 +110,6 @@ class Orchestrator:
         self.critic_after_failures = int(
             critic_after_failures or get_nested(config, ("orchestration", "critic_after_failures")) or 2
         )
-        self.brain = str(brain or get_nested(config, ("orchestration", "brain")) or "graph").lower()
-        if self.brain not in {"llm", "fallback", "hybrid", "graph"}:
-            raise ValueError(f"Unknown brain mode: {self.brain}")
         self.workspace = WorkspaceManager(get_nested(config, ("workspace_dir",)) or "~/ctf-workspace")
         self.llm_error: str | None = None
         if llm_provider is not None:
@@ -124,7 +147,10 @@ class Orchestrator:
 
     def _run_loop(self, state: ChallengeRunState, layout: WorkspaceLayout, *, resume: bool) -> SolveResult:
         trace_store = TraceStore(layout.trace_path)
-        executor = self._build_executor(state.challenge, trace_store)
+        executor = _CommandTimeoutExecutor(
+            self._build_executor(state.challenge, trace_store),
+            self.graph_budgets.command_timeout_seconds,
+        )
         if self.llm_error:
             trace_store.append(
                 TraceEvent(
@@ -199,7 +225,11 @@ class Orchestrator:
                     challenge_id=state.challenge.id,
                     agent="orchestrator",
                     action="graph-start",
-                    metadata={"brain_mode": brain_mode, "classification": classification.category},
+                    metadata={
+                        "brain_mode": brain_mode,
+                        "classification": classification.category,
+                        "budgets": self.graph_budgets.to_dict(),
+                    },
                 )
             )
             try:
@@ -400,7 +430,14 @@ class Orchestrator:
             run_id=context.state.challenge.id,
             provider_name=self._graph_reasoner_provider_name(reasoner),
             model_name=self._graph_reasoner_model_name(reasoner),
-            iteration_limits={"max_steps": context.max_steps, "timeout": context.timeout},
+            iteration_limits={
+                "max_tool_calls": self.graph_budgets.max_tool_calls,
+                "command_timeout_seconds": self.graph_budgets.command_timeout_seconds,
+                "run_timeout_seconds": self.graph_budgets.run_timeout_seconds,
+                "max_network_requests": self.graph_budgets.max_network_requests,
+                "max_repeated_actions": self.graph_budgets.max_repeated_actions,
+                "max_consecutive_failures": self.graph_budgets.max_consecutive_failures,
+            },
             trace_summary=trace_summary,
         )
         return NodeRuntime(tools=tool_dependencies, reasoner=adapter)
@@ -417,8 +454,12 @@ class Orchestrator:
                 checkpointer.setup()
                 workflow = build_workflow(
                     checkpointer=checkpointer,
-                    max_tool_calls=context.max_steps,
-                    max_total_seconds=context.timeout,
+                    command_timeout_seconds=self.graph_budgets.command_timeout_seconds,
+                    max_tool_calls=self.graph_budgets.max_tool_calls,
+                    max_network_requests=self.graph_budgets.max_network_requests,
+                    run_timeout_seconds=self.graph_budgets.run_timeout_seconds,
+                    max_repeated_actions=self.graph_budgets.max_repeated_actions,
+                    max_consecutive_failures=self.graph_budgets.max_consecutive_failures,
                 )
                 checkpoint_found = checkpointer.get_tuple(config) is not None
                 context.metadata["graph_resume_requested"] = resume_requested
@@ -470,7 +511,15 @@ class Orchestrator:
             raise RuntimeError("graph workflow invocation failed without fallback") from exc
         finally:
             clear_runtime(run_dir)
-        if not isinstance(final_state, dict) or final_state.get("phase") == "error" or final_state.get("failure_reason"):
+        budget_exhausted = isinstance(final_state, dict) and any(
+            isinstance(event, dict) and event.get("kind") == "budget-exhausted"
+            for event in final_state.get("events", [])
+        )
+        if (
+            not isinstance(final_state, dict)
+            or final_state.get("phase") == "error"
+            or (final_state.get("failure_reason") and not budget_exhausted)
+        ):
             raise RuntimeError("graph workflow invocation failed without fallback")
         return final_state
 
@@ -524,12 +573,21 @@ class Orchestrator:
             "graph_solved": bool(verified_candidates),
             "graph_paused": graph_metadata["paused"],
             "graph_failure_reason": graph_metadata["failure_reason"],
+            "budget_termination": graph_metadata["budget_termination"],
             "pause_reason": graph_metadata["pause_reason"],
             "pending_human_question": graph_metadata["pending_human_question"],
             "next_goal": graph_metadata["next_goal"],
         }
 
     def _graph_result_metadata(self, workflow_state: WorkflowState, layout: WorkspaceLayout) -> dict[str, Any]:
+        budget_termination = next(
+            (
+                event
+                for event in reversed(workflow_state.get("events", []))
+                if isinstance(event, dict) and event.get("kind") == "budget-exhausted"
+            ),
+            None,
+        )
         metadata = {
             "version": "8D",
             "run_dir": str(layout.challenge_dir),
@@ -550,6 +608,8 @@ class Orchestrator:
             "solved": bool(workflow_state.get("solved")),
             "verified_candidates": workflow_state.get("verified_candidates", []),
             "events": workflow_state.get("events", []),
+            "budgets": self.graph_budgets.to_dict(),
+            "budget_termination": budget_termination,
         }
         return self._json_safe_graph_metadata(metadata)
 

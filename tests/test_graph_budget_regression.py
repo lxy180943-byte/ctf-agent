@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 from langgraph.graph import END, START, StateGraph
 
 from ctf_agent.graph.checkpoint import graph_thread_id, open_run_checkpointer
@@ -9,7 +11,9 @@ from ctf_agent.graph.checkpoint import graph_thread_id, open_run_checkpointer
 from ctf_agent.agents import AgentContext
 from ctf_agent.core.models import Challenge
 from ctf_agent.core.workspace import WorkspaceManager
-from ctf_agent.graph.edges import _consecutive_failures, after_verify
+from ctf_agent.graph.builder import _budgeted_fail_run
+from ctf_agent.graph import edges
+from ctf_agent.graph.edges import _consecutive_failures, after_verify, budget_diagnostic
 from ctf_agent.graph.nodes import NodeRuntime, bind_runtime, clear_runtime, execute_experiment
 from ctf_agent.graph.state import WorkflowState, initial_workflow_state, restore_workflow_state, serialize_workflow_state
 from ctf_agent.pydantic_agent.tools import ToolDependencies
@@ -28,6 +32,97 @@ def _read_call(path: str, *, status: str = "executed", failure: bool = False, ti
         "status": status,
         "failure_signal_matched": failure,
         "timed_out": timed_out,
+    }
+
+
+@pytest.mark.parametrize(
+    ("budget_type", "calls", "kwargs"),
+    [
+        ("max_tool_calls", [_read_call("a.txt"), _read_call("b.txt")], {"max_tool_calls": 2}),
+        (
+            "max_network_requests",
+            [
+                {**_read_call("a.txt"), "action_type": "http_request"},
+                {**_read_call("b.txt"), "action_type": "http_request"},
+            ],
+            {"max_network_requests": 2},
+        ),
+        ("max_repeated_actions", [_read_call("a.txt"), _read_call("./a.txt")], {"max_repeated_actions": 2}),
+        (
+            "max_consecutive_failures",
+            [_read_call("a.txt", status="failed"), _read_call("b.txt", status="failed")],
+            {"max_consecutive_failures": 2},
+        ),
+    ],
+)
+def test_count_budget_boundaries_are_inclusive(tmp_path: Path, budget_type: str, calls: list[dict], kwargs: dict):
+    state = _state(tmp_path)
+    defaults = {
+        "max_tool_calls": 10,
+        "max_network_requests": 10,
+        "run_timeout_seconds": 1800,
+        "max_repeated_actions": 10,
+        "max_consecutive_failures": 10,
+    }
+    defaults.update(kwargs)
+
+    state["tool_calls"] = calls[:-1]
+    assert budget_diagnostic(state, **defaults) is None
+    assert after_verify(state, **defaults) == "reason_about_challenge"
+
+    state["tool_calls"] = calls
+    diagnostic = budget_diagnostic(state, **defaults)
+    assert diagnostic == {
+        "budget_type": budget_type,
+        "configured_limit": 2,
+        "current_value": 2,
+        "route": "fail_run",
+    }
+    assert after_verify(state, **defaults) == "fail_run"
+
+
+def test_budgeted_fail_run_records_terminal_diagnostics(tmp_path: Path):
+    state = _state(tmp_path)
+    state["tool_calls"] = [_read_call("a.txt"), _read_call("b.txt")]
+
+    result = _budgeted_fail_run(
+        state,
+        max_tool_calls=2,
+        max_network_requests=10,
+        run_timeout_seconds=1800,
+        max_repeated_actions=10,
+        max_consecutive_failures=10,
+    )
+
+    diagnostic = result["events"][-1]
+    assert diagnostic["kind"] == "budget-exhausted"
+    assert diagnostic["budget_type"] == "max_tool_calls"
+    assert diagnostic["configured_limit"] == 2
+    assert diagnostic["current_value"] == 2
+    assert diagnostic["route"] == "fail_run"
+    assert "max_tool_calls" in result["failure_reason"]
+
+
+def test_run_timeout_uses_wall_clock_and_is_inclusive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now if tz is not None else now.replace(tzinfo=None)
+
+    monkeypatch.setattr(edges, "datetime", FrozenDateTime)
+    state = _state(tmp_path)
+    state["events"] = [{"at": (now - timedelta(seconds=1)).isoformat()}]
+
+    assert budget_diagnostic(state, run_timeout_seconds=2) is None
+
+    state["events"] = [{"at": (now - timedelta(seconds=2)).isoformat()}]
+    assert budget_diagnostic(state, run_timeout_seconds=2) == {
+        "budget_type": "run_timeout_seconds",
+        "configured_limit": 2,
+        "current_value": 2.0,
+        "route": "fail_run",
     }
 
 

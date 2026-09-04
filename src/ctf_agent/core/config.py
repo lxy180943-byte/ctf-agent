@@ -2,14 +2,32 @@ from __future__ import annotations
 
 import os
 from copy import deepcopy
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 DEFAULT_CONFIG_RELATIVE = Path("configs/default.yaml")
 
 SECRET_CONFIG_KEYS = {"api_key", "apikey", "authorization", "password", "secret", "token"}
 NON_SECRET_CONFIG_KEYS = {"max_tokens", "token_limit", "token_budget"}
 LLM_ENV_ONLY_CONFIG_KEYS = {"api_key", "base_url", "model"}
+
+
+@dataclass(frozen=True)
+class GraphBudgets:
+    command_timeout_seconds: int = 60
+    run_timeout_seconds: int = 1800
+    max_tool_calls: int = 10
+    max_network_requests: int = 12
+    max_repeated_actions: int = 3
+    max_consecutive_failures: int = 3
+
+    def to_dict(self) -> dict[str, int]:
+        return asdict(self)
+
+
+DEFAULT_GRAPH_BUDGETS = GraphBudgets()
+GRAPH_BUDGET_KEYS = frozenset(DEFAULT_GRAPH_BUDGETS.to_dict())
 
 
 ENV_OVERRIDES = {
@@ -171,6 +189,49 @@ def set_nested(config: dict[str, Any], path: tuple[str, ...], value: Any) -> Non
     current[path[-1]] = value
 
 
+def resolve_graph_budgets(
+    config: Mapping[str, Any],
+    *,
+    overrides: Mapping[str, Any] | None = None,
+) -> GraphBudgets:
+    """Resolve graph budgets with explicit overrides taking highest precedence."""
+
+    graph = config.get("graph")
+    if graph is not None and not isinstance(graph, Mapping):
+        raise ConfigError("graph must be a mapping")
+    configured = graph.get("budgets") if isinstance(graph, Mapping) else None
+    if configured is not None and not isinstance(configured, Mapping):
+        raise ConfigError("graph.budgets must be a mapping")
+
+    configured = configured or {}
+    unknown = sorted(str(key) for key in configured if key not in GRAPH_BUDGET_KEYS)
+    if unknown:
+        raise ConfigError(f"Unknown graph budget keys: {', '.join(unknown)}")
+
+    explicit = {key: value for key, value in (overrides or {}).items() if value is not None}
+    unknown_overrides = sorted(str(key) for key in explicit if key not in GRAPH_BUDGET_KEYS)
+    if unknown_overrides:
+        raise ConfigError(f"Unknown graph budget override keys: {', '.join(unknown_overrides)}")
+
+    values: dict[str, int] = {}
+    for key, default in DEFAULT_GRAPH_BUDGETS.to_dict().items():
+        value = explicit.get(key, configured.get(key))
+        if value is None:
+            value = default
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ConfigError(f"graph.budgets.{key} must be a positive integer")
+        if value <= 0:
+            raise ConfigError(f"graph.budgets.{key} must be greater than zero")
+        values[key] = value
+    return GraphBudgets(**values)
+
+
+def normalize_graph_budgets(config: dict[str, Any]) -> dict[str, Any]:
+    normalized = deepcopy(config)
+    set_nested(normalized, ("graph", "budgets"), resolve_graph_budgets(normalized).to_dict())
+    return normalized
+
+
 def coerce_env_value(raw_value: str, existing_value: Any) -> Any:
     if isinstance(existing_value, bool):
         return raw_value.strip().lower() in {"1", "true", "yes", "on"}
@@ -285,4 +346,5 @@ def load_config(path: str | Path | None = None, environ: dict[str, str] | None =
     validate_secret_sources(config, config_path)
     config = apply_env_overrides(config, environ=environ)
     validate_llm_env_only_fields(config)
+    config = normalize_graph_budgets(config)
     return expand_paths(config)

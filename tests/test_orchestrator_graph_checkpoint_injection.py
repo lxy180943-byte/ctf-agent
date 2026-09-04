@@ -158,7 +158,14 @@ def test_invoke_graph_workflow_injects_run_dir_checkpointer_and_hashed_thread_id
     assert captured['opened_run_dir'] == context.layout.challenge_dir
     assert captured['entered'] is True
     assert captured['build_checkpointer'] is not None
-    assert captured['build_kwargs'] == {'max_tool_calls': context.max_steps, 'max_total_seconds': context.timeout}
+    assert captured['build_kwargs'] == {
+        'command_timeout_seconds': 60,
+        'max_tool_calls': 10,
+        'max_network_requests': 12,
+        'run_timeout_seconds': 1800,
+        'max_repeated_actions': 3,
+        'max_consecutive_failures': 3,
+    }
     assert captured['invoke_config'] == {'configurable': {'thread_id': expected_thread_id}}
     assert captured['invoke_kwargs']['interrupt_before'] == ['verify_candidates']
     assert expected_thread_id != context.state.challenge.id

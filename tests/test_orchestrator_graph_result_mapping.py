@@ -126,3 +126,28 @@ def test_failure_workflow_state_maps_to_failed(tmp_path: Path):
     assert metadata["graph_failure_reason"] == "graph stopped"
     assert state.metadata["graph"]["failed_actions"] == [{"reason": "bad action"}]
     _assert_saved(layout, ChallengeState.FAILED)
+
+
+def test_budget_failure_diagnostics_reach_result_and_saved_metadata(tmp_path: Path):
+    orchestrator, state, layout = _setup(tmp_path, "graph-map-budget")
+    diagnostic = {
+        "kind": "budget-exhausted",
+        "budget_type": "max_tool_calls",
+        "configured_limit": 3,
+        "current_value": 3,
+        "route": "fail_run",
+    }
+    workflow_state = _state(
+        state.challenge,
+        layout,
+        phase="failed",
+        failure_reason="Graph budget exhausted",
+        events=[diagnostic],
+    )
+
+    metadata = orchestrator._apply_graph_result(state, workflow_state, layout)
+
+    assert state.state is ChallengeState.FAILED
+    assert metadata["budget_termination"] == diagnostic
+    saved = _assert_saved(layout, ChallengeState.FAILED)
+    assert saved["metadata"]["graph"]["budget_termination"] == diagnostic

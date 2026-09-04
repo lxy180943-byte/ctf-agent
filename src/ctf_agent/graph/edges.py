@@ -17,7 +17,7 @@ def after_verify(
     *,
     max_tool_calls: int | None = None,
     max_network_requests: int = 12,
-    max_total_seconds: int = 1800,
+    run_timeout_seconds: int = 1800,
     max_repeated_actions: int = 3,
     max_consecutive_failures: int = 3,
 ) -> Route:
@@ -26,18 +26,66 @@ def after_verify(
         return "finish_run"
     if state.get("paused") or _needs_human(state):
         return "human_review"
-    if state.get("failure_reason") or state.get("iteration", 0) >= state.get("max_iterations", 1):
+    if state.get("failure_reason"):
         return "fail_run"
-    tool_limit = max_tool_calls if max_tool_calls is not None else state.get("max_iterations", 1)
-    if len(state.get("tool_calls", [])) >= tool_limit:
-        return "fail_run"
-    if _network_requests(state) >= max_network_requests or _elapsed_seconds(state) >= max_total_seconds:
-        return "fail_run"
-    if _repeated_action(state) >= max_repeated_actions:
-        return "fail_run"
-    if _consecutive_failures(state) >= max_consecutive_failures:
+    if budget_diagnostic(
+        state,
+        max_tool_calls=max_tool_calls,
+        max_network_requests=max_network_requests,
+        run_timeout_seconds=run_timeout_seconds,
+        max_repeated_actions=max_repeated_actions,
+        max_consecutive_failures=max_consecutive_failures,
+    ):
         return "fail_run"
     return "reason_about_challenge"
+
+
+def budget_diagnostic(
+    state: WorkflowState,
+    *,
+    max_tool_calls: int | None = None,
+    max_network_requests: int = 12,
+    run_timeout_seconds: int = 1800,
+    max_repeated_actions: int = 3,
+    max_consecutive_failures: int = 3,
+) -> dict[str, int | float | str] | None:
+    """Describe the first inclusive budget threshold reached, without mutating state."""
+
+    max_iterations = int(state.get("max_iterations", 1))
+    tool_limit = max_tool_calls if max_tool_calls is not None else max_iterations
+    tool_calls = len(state.get("tool_calls", []))
+    if tool_calls >= tool_limit:
+        return _budget_record("max_tool_calls", tool_limit, tool_calls)
+
+    network_requests = _network_requests(state)
+    if network_requests >= max_network_requests:
+        return _budget_record("max_network_requests", max_network_requests, network_requests)
+
+    elapsed_seconds = _elapsed_seconds(state)
+    if elapsed_seconds >= run_timeout_seconds:
+        return _budget_record("run_timeout_seconds", run_timeout_seconds, round(elapsed_seconds, 3))
+
+    repeated_actions = _repeated_action(state)
+    if repeated_actions >= max_repeated_actions:
+        return _budget_record("max_repeated_actions", max_repeated_actions, repeated_actions)
+
+    consecutive_failures = _consecutive_failures(state)
+    if consecutive_failures >= max_consecutive_failures:
+        return _budget_record("max_consecutive_failures", max_consecutive_failures, consecutive_failures)
+
+    iteration = int(state.get("iteration", 0))
+    if iteration >= max_iterations:
+        return _budget_record("max_iterations", max_iterations, iteration)
+    return None
+
+
+def _budget_record(budget_type: str, configured_limit: int, current_value: int | float) -> dict[str, int | float | str]:
+    return {
+        "budget_type": budget_type,
+        "configured_limit": configured_limit,
+        "current_value": current_value,
+        "route": "fail_run",
+    }
 
 
 def after_select_experiment(state: WorkflowState) -> SelectRoute:

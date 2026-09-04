@@ -85,8 +85,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     solve_parser = subparsers.add_parser("solve", help="Solve a local challenge with graph brain by default.")
     solve_parser.add_argument("challenge_dir", help="Challenge directory or challenge.yaml path.")
-    solve_parser.add_argument("--max-steps", type=int, default=10, help="Maximum planned command steps to execute.")
-    solve_parser.add_argument("--timeout", type=int, help="Per-command timeout in seconds.")
+    solve_parser.add_argument("--max-steps", type=int, help="Maximum tool calls. Defaults to graph.budgets.max_tool_calls.")
+    solve_parser.add_argument("--timeout", type=int, help="Per-command timeout. Defaults to graph.budgets.command_timeout_seconds.")
     solve_parser.add_argument("--executor", choices=["local", "docker"], help="Executor backend. Defaults to sandbox.engine.")
     solve_parser.add_argument("--mode", choices=["single", "specialist", "critic-after-failures"], help="Orchestration mode.")
     solve_parser.add_argument("--brain", choices=["graph", "fallback", "llm", "hybrid"], default="graph", help="Brain mode. Defaults to graph production mode. Use fallback for offline deterministic compatibility; llm/hybrid are deprecated legacy modes.")
@@ -95,8 +95,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     resume_parser = subparsers.add_parser("resume", help="Resume a saved run directory.")
     resume_parser.add_argument("run_dir", help="Run directory, for example ~/ctf-workspace/runs/challenge1.")
-    resume_parser.add_argument("--max-steps", type=int, default=10, help="Maximum planned command steps to execute.")
-    resume_parser.add_argument("--timeout", type=int, help="Per-command timeout in seconds.")
+    resume_parser.add_argument("--max-steps", type=int, help="Maximum tool calls. Defaults to graph.budgets.max_tool_calls.")
+    resume_parser.add_argument("--timeout", type=int, help="Per-command timeout. Defaults to graph.budgets.command_timeout_seconds.")
     resume_parser.add_argument("--executor", choices=["local", "docker"], help="Executor backend. Defaults to sandbox.engine.")
     resume_parser.add_argument("--mode", choices=["single", "specialist", "critic-after-failures"], help="Orchestration mode.")
     resume_parser.add_argument("--brain", choices=["graph", "fallback", "llm", "hybrid"], default="graph", help="Brain mode. Defaults to graph production mode. Use fallback for offline deterministic compatibility; llm/hybrid are deprecated legacy modes.")

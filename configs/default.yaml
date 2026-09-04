@@ -76,6 +76,15 @@ orchestration:
   mode: single
   critic_after_failures: 2
 
+graph:
+  budgets:
+    command_timeout_seconds: 60
+    run_timeout_seconds: 1800
+    max_tool_calls: 10
+    max_network_requests: 12
+    max_repeated_actions: 3
+    max_consecutive_failures: 3
+
 ui:
   challenge_root: examples
   host: 127.0.0.1
